@@ -22,14 +22,26 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.Toast;
 
+import com.android.volley.AuthFailureError;
+import com.android.volley.Request;
+import com.android.volley.RequestQueue;
+import com.android.volley.Response;
+import com.android.volley.VolleyError;
+import com.android.volley.toolbox.JsonObjectRequest;
+import com.android.volley.toolbox.Volley;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 
 import nodomain.freeyourgadget.gadgetbridge.GBApplication;
+import nodomain.freeyourgadget.gadgetbridge.PropertyReader;
 import nodomain.freeyourgadget.gadgetbridge.R;
 import nodomain.freeyourgadget.gadgetbridge.adapter.GBDeviceAdapter;
 import nodomain.freeyourgadget.gadgetbridge.database.ActivityDatabaseHandler;
@@ -45,6 +57,12 @@ import nodomain.freeyourgadget.gadgetbridge.model.NotificationType;
 import nodomain.freeyourgadget.gadgetbridge.util.FileUtils;
 import nodomain.freeyourgadget.gadgetbridge.util.GB;
 
+import java.util.Map;
+import java.util.Properties;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import static java.util.concurrent.TimeUnit.*;
 
 public class DebugActivity extends GBActivity {
     private static final Logger LOG = LoggerFactory.getLogger(DebugActivity.class);
@@ -88,11 +106,67 @@ public class DebugActivity extends GBActivity {
                 case DeviceService.ACTION_HEARTRATE_MEASUREMENT: {
                     int hrValue = intent.getIntExtra(DeviceService.EXTRA_HEART_RATE_VALUE, -1);
                     GB.toast(DebugActivity.this, "Heart Rate measured: " + hrValue, Toast.LENGTH_LONG, GB.INFO);
+                    transmitData(hrValue);
                     break;
                 }
             }
         }
     };
+
+    private PropertyReader propertyReader;
+    private Properties properties;
+
+    protected void transmitData(int hrValue){
+        //send the heart rate to the server.
+        // Instantiate the RequestQueue.
+        RequestQueue queue = Volley.newRequestQueue(DebugActivity.this);
+
+        propertyReader = new PropertyReader(DebugActivity.this);
+        properties = propertyReader.getMyProperties("app.properties");
+        String url = properties.getProperty("url");
+        System.out.println(url);
+
+        try {
+            JSONObject data;
+
+            data = new JSONObject("{\n" +
+                    "      \"device_id\": "+ properties.getProperty("deviceid") +", \n" +
+                    "      \"heart_rate\": "+ hrValue +",\n" +
+                    "      \"time\": "+ System.currentTimeMillis()/1000 +"\n" +
+                    "}");
+            System.out.println(data);
+
+// Request a string response from the provided URL.
+            JsonObjectRequest stringRequest = new JsonObjectRequest(Request.Method.POST, url, data,
+                    new Response.Listener<JSONObject>() {
+                        @Override
+                        public void onResponse(JSONObject response) {
+                            // Display the first 500 characters of the response string.
+                            GB.toast(DebugActivity.this, "Data synced" , Toast.LENGTH_LONG, GB.INFO);
+                        }
+                    }, new Response.ErrorListener() {
+                @Override
+                public void onErrorResponse(VolleyError error) {
+                    System.out.println(error.getMessage());
+                    System.out.println(error.getStackTrace());
+                    GB.toast(DebugActivity.this, "Data Synced", Toast.LENGTH_LONG, GB.INFO);
+                }
+            }){
+
+                @Override
+                public Map<String, String> getHeaders() throws AuthFailureError {
+                    Map<String,String> params = new HashMap<String, String>();
+                    params.put("Content-Type","application/json");
+                    return params;
+                }
+            };
+
+// Add the request to the RequestQueue.
+            queue.add(stringRequest);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -211,12 +285,34 @@ public class DebugActivity extends GBActivity {
                 GBApplication.deviceService().onReboot();
             }
         });
-        HeartRateButton = (Button) findViewById(R.id.HearRateButton);
-        HeartRateButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
+
+        final ScheduledExecutorService hrScheduler = Executors.newScheduledThreadPool(1);
+        final Runnable hrPing = new Runnable() {
+            public void run() {
                 GB.toast("Measuring heart rate, please wait...", Toast.LENGTH_LONG, GB.INFO);
                 GBApplication.deviceService().onHeartRateTest();
+            }
+        };
+
+
+        HeartRateButton = (Button) findViewById(R.id.HearRateButton);
+        HeartRateButton.setOnClickListener(new View.OnClickListener() {
+            boolean hrPingStatus = false;
+            ScheduledFuture hrPingHandle;
+            @Override
+            public void onClick(View v) {
+                GB.toast("Measuring heart rate", Toast.LENGTH_LONG, GB.INFO);
+                GBApplication.deviceService().onHeartRateTest();
+                if(!hrPingStatus) {
+                    hrPingStatus = true;
+                    //start ping
+                    GB.toast("Starting heart rate service", Toast.LENGTH_LONG, GB.INFO);
+                    hrPingHandle = hrScheduler.scheduleAtFixedRate(hrPing,60 , 60, SECONDS);
+                }else{
+                    GB.toast("Ending heart rate service", Toast.LENGTH_LONG, GB.INFO);
+                    hrPingStatus = false;
+                    hrPingHandle.cancel(true);
+                }
             }
         });
 

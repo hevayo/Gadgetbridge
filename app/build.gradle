@@ -61,6 +61,7 @@ dependencies {
     compile 'net.e175.klaus:solarpositioning:0.0.9'
     compile 'com.github.freeyourgadget:greendao:c3830951e5dd3d1e63d7bac600d5f773b81df363'
     compile 'com.github.woxthebox:draglistview:1.2.6'
+    compile 'com.android.volley:volley:1.0.0'
 }
 
 preBuild.dependsOn(":GBDaoGenerator:genSources")
